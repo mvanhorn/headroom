@@ -8,8 +8,10 @@ import pytest
 
 from headroom.providers.copilot.vscode import (
     configure_vscode_proxy_settings,
+    local_vscode_profiles,
     remove_vscode_proxy_settings,
     unrouted_vscode_profiles,
+    vscode_profile_overrides_are_unmanaged,
     vscode_proxy_url,
     vscode_settings_path,
 )
@@ -134,9 +136,15 @@ def test_unrouted_profiles_lists_only_profiles_with_their_own_settings(tmp_path:
         },
     )
 
+    work = user_dir / "profiles" / "6c87cdb4" / "settings.json"
+    negative = user_dir / "profiles" / "-1f2e3d" / "settings.json"
+    assert local_vscode_profiles(user_dir) == [
+        ("Work", work),
+        ("Negative hash", negative),
+    ]
     assert unrouted_vscode_profiles(user_dir) == [
-        ("Work", user_dir / "profiles" / "6c87cdb4" / "settings.json"),
-        ("Negative hash", user_dir / "profiles" / "-1f2e3d" / "settings.json"),
+        ("Work", work),
+        ("Negative hash", negative),
     ]
 
 
@@ -162,6 +170,8 @@ def test_unrouted_profiles_skips_a_profile_that_overrides_both_endpoints(
         )
 
     assert unrouted_vscode_profiles(user_dir) == []
+    assert local_vscode_profiles(user_dir) == [("Work", profile_settings)]
+    assert vscode_profile_overrides_are_unmanaged(profile_settings) is not managed
 
 
 @pytest.mark.parametrize(

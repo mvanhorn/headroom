@@ -203,13 +203,12 @@ def configure_vscode_proxy_settings(path: Path, proxy_url: str) -> str:
     return "updated" if had_managed_block else "added"
 
 
-def unrouted_vscode_profiles(user_dir: Path) -> list[tuple[str, Path]]:
-    """Return ``(name, settings.json)`` for profiles that ignore ``user_dir/settings.json``.
+def local_vscode_profiles(user_dir: Path) -> list[tuple[str, Path]]:
+    """Return ``(name, settings.json)`` for profiles that keep their own settings.
 
-    A window in a profile with its own settings reads only that profile's
-    settings.json, and Copilot takes its endpoint overrides from user settings
-    alone, so overrides in the user directory's settings.json never reach it.
-    A directory that is not a VS Code user directory has no profiles.
+    A window in one of these profiles ignores ``user_dir/settings.json``.
+    Profiles that share the Default profile's settings are omitted. A
+    directory that is not a VS Code user directory has no profiles.
     """
     try:
         state = json.loads(
@@ -218,7 +217,7 @@ def unrouted_vscode_profiles(user_dir: Path) -> list[tuple[str, Path]]:
     except (OSError, ValueError):
         return []
     profiles = state.get("userDataProfiles") if isinstance(state, dict) else None
-    unrouted: list[tuple[str, Path]] = []
+    local: list[tuple[str, Path]] = []
     for profile in profiles if isinstance(profiles, list) else []:
         if not isinstance(profile, dict):
             continue
@@ -230,7 +229,37 @@ def unrouted_vscode_profiles(user_dir: Path) -> list[tuple[str, Path]]:
             isinstance(location, str) and re.fullmatch(r"[\w-]+", location)
         ):
             continue
-        path = user_dir / "profiles" / location / "settings.json"
+        name = profile.get("name")
+        local.append(
+            (
+                name if isinstance(name, str) else location,
+                user_dir / "profiles" / location / "settings.json",
+            )
+        )
+    return local
+
+
+def vscode_profile_overrides_are_unmanaged(path: Path) -> bool:
+    """True when Copilot overrides exist outside Headroom's managed block."""
+    try:
+        raw = _read_settings(path)
+        settings = _parse_settings(raw)
+    except (OSError, ValueError, click.ClickException):
+        return False
+    if not (isinstance(settings, dict) and _PROXY_KEY in settings and _CAPI_KEY in settings):
+        return False
+    return _MARKER_START not in raw
+
+
+def unrouted_vscode_profiles(user_dir: Path) -> list[tuple[str, Path]]:
+    """Return local profiles whose settings do not yet override Copilot endpoints.
+
+    A window in a profile with its own settings reads only that profile's
+    settings.json, and Copilot takes its endpoint overrides from user settings
+    alone, so overrides in the user directory's settings.json never reach it.
+    """
+    unrouted: list[tuple[str, Path]] = []
+    for name, path in local_vscode_profiles(user_dir):
         try:
             settings = _parse_settings(_read_settings(path))
         except (OSError, ValueError, click.ClickException):
@@ -238,6 +267,5 @@ def unrouted_vscode_profiles(user_dir: Path) -> list[tuple[str, Path]]:
         # Only live settings count: the managed-block marker is itself a comment.
         if isinstance(settings, dict) and _PROXY_KEY in settings and _CAPI_KEY in settings:
             continue
-        name = profile.get("name")
-        unrouted.append((name if isinstance(name, str) else location, path))
+        unrouted.append((name, path))
     return unrouted

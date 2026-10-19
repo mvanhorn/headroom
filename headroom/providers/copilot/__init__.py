@@ -2,8 +2,10 @@
 
 from .vscode import (
     configure_vscode_proxy_settings,
+    local_vscode_profiles,
     remove_vscode_proxy_settings,
     unrouted_vscode_profiles,
+    vscode_profile_overrides_are_unmanaged,
     vscode_proxy_url,
     vscode_settings_path,
     vscode_user_dir,
@@ -37,8 +39,10 @@ __all__ = [
     "strip_auto_model_args",
     "validate_configuration",
     "configure_vscode_proxy_settings",
+    "local_vscode_profiles",
     "remove_vscode_proxy_settings",
     "unrouted_vscode_profiles",
+    "vscode_profile_overrides_are_unmanaged",
     "vscode_proxy_url",
     "vscode_settings_path",
     "vscode_user_dir",

@@ -90,16 +90,17 @@ def test_wrap_vscode_names_profiles_that_ignore_default_settings(
 
     implicit = _run_wrap_vscode()
     assert "overrideCapiUrl" in (user_dir / "settings.json").read_text(encoding="utf-8")
-    # A window in the "Work" profile reads only its own settings.json, so the
-    # block above never reaches it; say so instead of reporting plain success.
-    assert "VS Code profile 'Work'" in implicit
+    # A window in the "Work" profile reads only its own settings.json, so wrap
+    # writes the same Copilot overrides there instead of leaving it on GitHub.
+    assert "profile 'Work'" in implicit
     assert str(work_settings) in implicit
+    assert "overrideCapiUrl" in work_settings.read_text(encoding="utf-8")
+    assert "Warning" not in implicit
     # A profile that shares the Default profile's settings already sees the block.
     assert "Shared" not in implicit
-    # Naming the Default file explicitly configures the same file, so it warns too.
     explicit = _run_wrap_vscode("--settings-file", str(user_dir / "settings.json"))
-    assert "VS Code profile 'Work'" in explicit
-    # Following the advice routes the profile, and nothing is left to warn about.
+    assert "profile 'Work'" in explicit
+    assert "Warning" not in explicit
     assert "Warning" not in _run_wrap_vscode("--settings-file", str(work_settings))
     assert "Warning" not in _run_wrap_vscode()
 
@@ -115,8 +116,10 @@ def test_wrap_vscode_checks_the_profiles_of_the_user_dir_it_configures(
     _write_profiles(other_user_dir, {"location": "-2b3c4d", "name": "Beta"})
 
     output = _run_wrap_vscode("--settings-file", str(other_user_dir / "settings.json"))
+    beta_settings = other_user_dir / "profiles" / "-2b3c4d" / "settings.json"
 
-    assert "VS Code profile 'Beta'" in output
+    assert "profile 'Beta'" in output
+    assert "overrideCapiUrl" in beta_settings.read_text(encoding="utf-8")
     assert "Work" not in output
 
 
@@ -157,3 +160,47 @@ def test_unwrap_vscode_removes_only_managed_settings(tmp_path: Path) -> None:
     result = CliRunner().invoke(main, ["unwrap", "vscode", "--settings-file", str(path)])
     assert result.exit_code == 0, result.output
     assert path.read_text(encoding="utf-8") == original
+
+
+def test_wrap_vscode_skips_a_profile_with_unmanaged_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_dir = _default_user_dir(tmp_path, monkeypatch)
+    _write_profiles(user_dir, {"location": "6c87cdb4", "name": "Work"})
+    work_settings = user_dir / "profiles" / "6c87cdb4" / "settings.json"
+    work_settings.parent.mkdir(parents=True)
+    original = (
+        '{\n  "github.copilot.advanced.debug.overrideProxyUrl": "http://other",\n'
+        '  "github.copilot.advanced.debug.overrideCapiUrl": "http://other"\n}\n'
+    )
+    work_settings.write_text(original, encoding="utf-8")
+
+    output = _run_wrap_vscode()
+    assert "Warning" in output
+    assert "profile 'Work'" in output
+    assert work_settings.read_text(encoding="utf-8") == original
+    assert "overrideCapiUrl" in (user_dir / "settings.json").read_text(encoding="utf-8")
+
+
+def test_unwrap_vscode_removes_managed_settings_from_local_profiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_dir = _default_user_dir(tmp_path, monkeypatch)
+    _write_profiles(user_dir, {"location": "6c87cdb4", "name": "Work"})
+    default_settings = user_dir / "settings.json"
+    work_settings = user_dir / "profiles" / "6c87cdb4" / "settings.json"
+    default_original = '{\n  "editor.fontSize": 14\n}\n'
+    work_original = '{\n  "editor.fontSize": 16\n}\n'
+    default_settings.write_text(default_original, encoding="utf-8")
+    work_settings.parent.mkdir(parents=True)
+    work_settings.write_text(work_original, encoding="utf-8")
+
+    _run_wrap_vscode()
+    assert "overrideCapiUrl" in default_settings.read_text(encoding="utf-8")
+    assert "overrideCapiUrl" in work_settings.read_text(encoding="utf-8")
+
+    result = CliRunner().invoke(main, ["unwrap", "vscode"])
+    assert result.exit_code == 0, result.output
+    assert default_settings.read_text(encoding="utf-8") == default_original
+    assert work_settings.read_text(encoding="utf-8") == work_original
+    assert "profile 'Work'" in result.output

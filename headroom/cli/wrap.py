@@ -127,8 +127,9 @@ from headroom.providers.copilot import (
 )
 from headroom.providers.copilot import (
     configure_vscode_proxy_settings,
+    local_vscode_profiles,
     remove_vscode_proxy_settings,
-    unrouted_vscode_profiles,
+    vscode_profile_overrides_are_unmanaged,
     vscode_proxy_url,
     vscode_settings_path,
 )
@@ -7018,16 +7019,31 @@ def vscode_copilot(
 
     def _print_setup(actual_port: int) -> None:
         if configure:
-            action = configure_vscode_proxy_settings(
-                target_settings,
-                vscode_proxy_url(actual_port, _project_name_from_cwd()),
-            )
+            proxy_url = vscode_proxy_url(actual_port, _project_name_from_cwd())
+            action = configure_vscode_proxy_settings(target_settings, proxy_url)
             click.echo(f"  VS Code Copilot proxy settings {action}: {target_settings}")
-            for name, profile_settings in unrouted_vscode_profiles(target_settings.parent):
+            for name, profile_settings in local_vscode_profiles(target_settings.parent):
+                if profile_settings.resolve() == target_settings.resolve():
+                    continue
+                if vscode_profile_overrides_are_unmanaged(profile_settings):
+                    click.echo(
+                        f"  Warning: VS Code profile '{name}' keeps its own Copilot endpoint "
+                        "overrides, so Copilot there still bypasses Headroom. Route it with: "
+                        f'headroom wrap vscode --settings-file "{profile_settings}"'
+                    )
+                    continue
+                try:
+                    profile_action = configure_vscode_proxy_settings(profile_settings, proxy_url)
+                except click.ClickException as exc:
+                    click.echo(
+                        f"  Warning: VS Code profile '{name}' keeps its own settings, so Copilot "
+                        f"there still bypasses Headroom ({exc}). Route it with: "
+                        f'headroom wrap vscode --settings-file "{profile_settings}"'
+                    )
+                    continue
                 click.echo(
-                    f"  Warning: VS Code profile '{name}' keeps its own settings, so Copilot "
-                    "there still bypasses Headroom. Route it with: headroom wrap vscode "
-                    f'--settings-file "{profile_settings}"'
+                    f"  VS Code Copilot proxy settings {profile_action} for profile "
+                    f"'{name}': {profile_settings}"
                 )
             click.echo(
                 "  Keep using Copilot's normal model picker; the selected model is preserved."
@@ -7070,6 +7086,19 @@ def unwrap_vscode_copilot(settings_file: Path | None) -> None:
         click.echo(f"Removed Headroom Copilot proxy settings from {target_settings}")
     else:
         click.echo(f"No Headroom Copilot proxy settings found in {target_settings}")
+    target_resolved = target_settings.resolve()
+    for name, profile_settings in local_vscode_profiles(target_settings.parent):
+        if profile_settings.resolve() == target_resolved:
+            continue
+        try:
+            removed = remove_vscode_proxy_settings(profile_settings)
+        except click.ClickException as exc:
+            click.echo(f"  Warning: could not edit VS Code profile '{name}': {exc}")
+            continue
+        if removed:
+            click.echo(
+                f"Removed Headroom Copilot proxy settings from profile '{name}': {profile_settings}"
+            )
 
 
 # =============================================================================
